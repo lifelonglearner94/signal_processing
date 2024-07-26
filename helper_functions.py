@@ -145,3 +145,21 @@ def synchronize_signals(input_signal_ecg, input_signal_ppg, ecg_pulse_locations,
     plt.show()
 
     return aligned_resampled_ppg
+
+def align_and_trim_signals(signal1, signal2, threshold=1e-6):
+    # Find start and end indices of non-padding for both signals
+    start1 = np.argmax(np.abs(signal1) > threshold)
+    end1 = len(signal1) - np.argmax(np.abs(signal1[::-1]) > threshold)
+
+    start2 = np.argmax(np.abs(signal2) > threshold)
+    end2 = len(signal2) - np.argmax(np.abs(signal2[::-1]) > threshold)
+
+    # Determine common start and end to maintain alignment
+    common_start = max(start1, start2)
+    common_end = min(end1, end2)
+
+    # Trim both signals
+    trimmed_signal1 = signal1[common_start:common_end]
+    trimmed_signal2 = signal2[common_start:common_end]
+
+    return trimmed_signal1, trimmed_signal2
