@@ -1,5 +1,5 @@
 import numpy as np
-from scipy import signal
+from scipy import signal, stats
 import matplotlib.pyplot as plt
 
 def simple_ma_detrending(input_signal, window_size=10):
@@ -22,6 +22,7 @@ def plot_three_signals(signal1, signal2, signal3):
     axs[1].plot(signal2)
     axs[2].plot(signal3)
     plt.show()
+
 
 def find_frequency(input_signal, threshold):
     # Find peaks that exceed a threshold value
@@ -107,59 +108,80 @@ def anomaly_detection(peaks):
 
     return anomalies
 
-def synchronize_signals(input_signal_ecg, input_signal_ppg, ecg_pulse_locations, ppg_pulse_locations):
 
-    ecg_diff = np.median(np.diff(ecg_pulse_locations))
-    ppg_diff = np.median(np.diff(ppg_pulse_locations))
+def iterativly_find_best_synch(input_signal_ecg, input_signal_ppg, ecg_pulse_locations, ppg_pulse_locations):
 
-    scaling_factor = ecg_diff / ppg_diff
+    # Using the information that ECG has started before PPG and stopped afterwards I do the following calulation:
+    number_of_pulses_ecg = len(ecg_pulse_locations)
+    number_of_pulses_ppg = len(ppg_pulse_locations)
 
-    resampled_ppg = signal.resample(input_signal_ppg, int(len(input_signal_ppg) * scaling_factor))
+    diff_number_pulses = number_of_pulses_ecg - number_of_pulses_ppg
 
-    cross_corr = signal.correlate(input_signal_ecg, resampled_ppg, mode='full')
+    ecg_median_timesteps_between_pulses = np.median(np.diff(ecg_pulse_locations))
 
-    max_corr = np.max(cross_corr)
+    timesteps_ecg_is_longer_than_ppg = ecg_median_timesteps_between_pulses * diff_number_pulses
 
-    lag = np.argmax(cross_corr) - (len(resampled_ppg) - 1)
+    final_corr_coefs = []
+    ecg_signals = []
+    ppg_signals = []
+
+    for iterator in range(2000):
+
+        half_timesteps_ecg_is_longer_than_ppg = int((timesteps_ecg_is_longer_than_ppg / 2) + iterator)
+
+        # Cut ECG signal at start and end
+        cutted_ecg_signal = input_signal_ecg[half_timesteps_ecg_is_longer_than_ppg:len(input_signal_ecg)-half_timesteps_ecg_is_longer_than_ppg]
+
+        # Bring PPG to the same length as ECG
+        resampled_ppg = signal.resample(input_signal_ppg, len(cutted_ecg_signal))
+
+        # Find the number of timeshifts needed for the signals to match best
+        cross_corr = signal.correlate(cutted_ecg_signal, resampled_ppg, mode='full')
+
+        # Find timeshift where the signal matches best (result of cross-corr is around double the length of original signal)
+        lag = np.argmax(cross_corr) - (len(resampled_ppg) - 1)
+
+        # if lag bigger 0 a shift to the right is needed, else a shift to the left
+        if lag > 0:
+            aligned_resampled_ppg = np.pad(resampled_ppg, (lag, 0), mode='constant')[:len(cutted_ecg_signal)]
+        else:
+            aligned_resampled_ppg = np.pad(resampled_ppg, (0, -lag), mode='constant')[:len(cutted_ecg_signal)]
+
+        # Evaluate to find the best matching signals
+        final_corr_coef = stats.pearsonr(aligned_resampled_ppg, cutted_ecg_signal)[0]
+        final_corr_coefs.append(final_corr_coef)
+
+        ecg_signals.append(cutted_ecg_signal)
+        ppg_signals.append(aligned_resampled_ppg)
+
+    # Get the index for the highest correlation
+    max_index = final_corr_coefs.index(max(final_corr_coefs))
+
+    best_ecg = ecg_signals[max_index]
+    best_ppg = ppg_signals[max_index]
+
+    return best_ecg, best_ppg
 
 
-    if lag > 0:
-        aligned_resampled_ppg = np.pad(resampled_ppg, (lag, 0), mode='constant')[:len(input_signal_ecg)]
-    else:
-        aligned_resampled_ppg = np.pad(resampled_ppg, (0, -lag), mode='constant')[:len(input_signal_ecg)]
+def plot_all_signals(first_ecg, first_ppg, second_ecg, second_ppg, third_ecg, third_ppg):
+    fig, axs = plt.subplots(1, 3, figsize=(15, 5))
 
+    axs[0].plot(calculate_zscore(first_ecg), label='Z-Scored ECG')
+    axs[0].plot(first_ppg, label='PPG')
+    axs[0].set_title('First Signals')
+    axs[0].legend()
 
-    # output_ppg = aligned_resampled_ppg[lag:]
-    # output_ecg = input_signal_ecg[lag:]
+    axs[1].plot(calculate_zscore(second_ecg), label='Z-Scored ECG')
+    axs[1].plot(calculate_zscore(second_ppg), label='Z-Scored PPG')
+    axs[1].set_title('Second Signals')
+    axs[1].legend()
 
-    # Plotting the data
-    #plt.plot(resampled_ppg, label='Resampled PPG')
-    plt.plot(aligned_resampled_ppg, label='Aligned Resampled PPG')
-    plt.plot(calculate_zscore(input_signal_ecg), label='Z-scored ECG')
+    axs[2].plot(calculate_zscore(third_ecg), label='Z-Scored ECG')
+    axs[2].plot(calculate_zscore(third_ppg), label='Z-Scored PPG')
+    axs[2].set_title('Third Signals')
+    axs[2].legend()
 
-    plt.xlim(80000, 84000)
-    plt.ylim(-10, 10)
+    fig.suptitle('ECG and PPG Signals Comparison', fontsize=16)
 
-    plt.legend()
-
+    plt.tight_layout()
     plt.show()
-
-    return aligned_resampled_ppg
-
-def align_and_trim_signals(signal1, signal2, threshold=1e-6):
-    # Find start and end indices of non-padding for both signals
-    start1 = np.argmax(np.abs(signal1) > threshold)
-    end1 = len(signal1) - np.argmax(np.abs(signal1[::-1]) > threshold)
-
-    start2 = np.argmax(np.abs(signal2) > threshold)
-    end2 = len(signal2) - np.argmax(np.abs(signal2[::-1]) > threshold)
-
-    # Determine common start and end to maintain alignment
-    common_start = max(start1, start2)
-    common_end = min(end1, end2)
-
-    # Trim both signals
-    trimmed_signal1 = signal1[common_start:common_end]
-    trimmed_signal2 = signal2[common_start:common_end]
-
-    return trimmed_signal1, trimmed_signal2
