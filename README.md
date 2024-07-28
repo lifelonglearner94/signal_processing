@@ -25,8 +25,3 @@ This assignment focuses on demonstrating signal processing knowledge, problem-so
 - Problem-solving approach
 - Coding skills
 - Code organization and documentation
-
-## Submission
-Submit your solution via the GitHub repository. Include all necessary code, documentation, and explanation of your approach.
-
-Good luck and enjoy the process!
