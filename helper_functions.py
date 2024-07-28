@@ -3,7 +3,9 @@ from scipy import signal, stats
 import matplotlib.pyplot as plt
 
 def simple_ma_detrending(input_signal, window_size=10):
-
+    """
+    Apply simple moving average detrending to the input signal.
+    """
     # Create the moving average filter
     window = np.ones(window_size) / window_size
 
@@ -17,6 +19,9 @@ def simple_ma_detrending(input_signal, window_size=10):
 
 
 def plot_three_signals(signal1, signal2, signal3):
+    """
+    Plot three signals in separate subplots.
+    """
     fig, axs = plt.subplots(1, 3, figsize=(15, 5))
     axs[0].plot(signal1)
     axs[1].plot(signal2)
@@ -25,6 +30,9 @@ def plot_three_signals(signal1, signal2, signal3):
 
 
 def find_frequency(input_signal, threshold):
+    """
+    Estimate the frequency of a signal based on peak detection.
+    """
     # Find peaks that exceed a threshold value
     peak_times, _ = signal.find_peaks(input_signal, height=threshold)
 
@@ -40,7 +48,9 @@ def find_frequency(input_signal, threshold):
 
 
 def highpass_process_signal(input_signal, sampling_rate=200, detrend_cutoff=0.3, smooth_cutoff=2.5):
-
+    """
+    Apply high-pass and low-pass filters to process the input signal.
+    """
     nyquist_freq = 0.5 * sampling_rate
 
     # Design high-pass filter for detrending
@@ -61,6 +71,9 @@ def highpass_process_signal(input_signal, sampling_rate=200, detrend_cutoff=0.3,
 
 
 def find_pulse_locations(input_signal, threshold):
+    """
+    Find the locations of pulses in the input signal that exceed a threshold.
+    """
     # Find peaks that exceed a threshold value
     peak_times, _ = signal.find_peaks(input_signal, height=threshold)
 
@@ -68,7 +81,9 @@ def find_pulse_locations(input_signal, threshold):
 
 
 def plot_signals_with_peaks(signal1, signal2, signal3, peaks1, peaks2, peaks3, xlim, ylim):
-
+    """
+    Plot three signals with their detected peaks.
+    """
     signals = [signal1, signal2, signal3]
     peaks = [peaks1, peaks2, peaks3]
 
@@ -89,12 +104,19 @@ def plot_signals_with_peaks(signal1, signal2, signal3, peaks1, peaks2, peaks3, x
 
 
 def calculate_zscore(array: np.ndarray):
+    """
+    Calculate the z-score for each element in the input array.
+    """
     # (X−μ)​ / σ
     zscore = (array - np.mean(array)) / np.std(array)
     return zscore
 
 def anomaly_detection(peaks):
+    """
+    Detect anomalies in the intervals between peaks.
+    """
     peak_diff = np.diff(peaks)
+    # I standardize the data, making it easier to compare values
     peak_diff_z = calculate_zscore(peak_diff)
 
     # The data is different, so we need to compute a reasonable threshold
@@ -109,28 +131,17 @@ def anomaly_detection(peaks):
     return anomalies
 
 
-def iterativly_find_best_synch(input_signal_ecg, input_signal_ppg, ecg_pulse_locations, ppg_pulse_locations):
-
-    # Using the information that ECG has started before PPG and stopped afterwards I do the following calulation:
-    number_of_pulses_ecg = len(ecg_pulse_locations)
-    number_of_pulses_ppg = len(ppg_pulse_locations)
-
-    diff_number_pulses = number_of_pulses_ecg - number_of_pulses_ppg
-
-    ecg_median_timesteps_between_pulses = np.median(np.diff(ecg_pulse_locations))
-
-    timesteps_ecg_is_longer_than_ppg = ecg_median_timesteps_between_pulses * diff_number_pulses
-
-    final_corr_coefs = []
-    ecg_signals = []
-    ppg_signals = []
-
-    for iterator in range(2000):
-
-        half_timesteps_ecg_is_longer_than_ppg = int((timesteps_ecg_is_longer_than_ppg / 2) + iterator)
+def iterativly_find_best_synch(input_signal_ecg, input_signal_ppg):
+    """
+    Iteratively find the best synchronization between ECG and PPG signals.
+    """
+    # I define this function here because i just need it here
+    def cut_ecg_resample_ppg_and_synch(cut_value):
+        # Casting to int, just in case
+        cut_value = int(cut_value)
 
         # Cut ECG signal at start and end
-        cutted_ecg_signal = input_signal_ecg[half_timesteps_ecg_is_longer_than_ppg:len(input_signal_ecg)-half_timesteps_ecg_is_longer_than_ppg]
+        cutted_ecg_signal = input_signal_ecg[cut_value:len(input_signal_ecg)-cut_value]
 
         # Bring PPG to the same length as ECG
         resampled_ppg = signal.resample(input_signal_ppg, len(cutted_ecg_signal))
@@ -139,7 +150,8 @@ def iterativly_find_best_synch(input_signal_ecg, input_signal_ppg, ecg_pulse_loc
         cross_corr = signal.correlate(cutted_ecg_signal, resampled_ppg, mode='full')
 
         # Find timeshift where the signal matches best (result of cross-corr is around double the length of original signal)
-        lag = np.argmax(cross_corr) - (len(resampled_ppg) - 1)
+        # Shift max for 25000 steps
+        lag = np.argmax(cross_corr[len(resampled_ppg):len(resampled_ppg)+25000])
 
         # if lag bigger 0 a shift to the right is needed, else a shift to the left
         if lag > 0:
@@ -147,27 +159,38 @@ def iterativly_find_best_synch(input_signal_ecg, input_signal_ppg, ecg_pulse_loc
         else:
             aligned_resampled_ppg = np.pad(resampled_ppg, (0, -lag), mode='constant')[:len(cutted_ecg_signal)]
 
+        return cutted_ecg_signal, aligned_resampled_ppg
+
+    final_corr_coefs = []
+    cut_values = []
+    for current_cut_value in range(2000, 10000, 4):
+
+        current_ecg, current_ppg = cut_ecg_resample_ppg_and_synch(current_cut_value)
+
         # Evaluate to find the best matching signals
-        final_corr_coef = stats.pearsonr(aligned_resampled_ppg, cutted_ecg_signal)[0]
+        final_corr_coef = stats.pearsonr(current_ppg, current_ecg)[0]
+
         final_corr_coefs.append(final_corr_coef)
+        cut_values.append(current_cut_value)
 
-        ecg_signals.append(cutted_ecg_signal)
-        ppg_signals.append(aligned_resampled_ppg)
-
-    # Get the index for the highest correlation
+    # Get the index for the highest correlation/score
     max_index = final_corr_coefs.index(max(final_corr_coefs))
 
-    best_ecg = ecg_signals[max_index]
-    best_ppg = ppg_signals[max_index]
+    best_summand = cut_values[max_index]
+
+    best_ecg, best_ppg = cut_ecg_resample_ppg_and_synch(best_summand)
 
     return best_ecg, best_ppg
 
 
 def plot_all_signals(first_ecg, first_ppg, second_ecg, second_ppg, third_ecg, third_ppg):
+    """
+    Plot three pairs of ECG and PPG signals.
+    """
     fig, axs = plt.subplots(1, 3, figsize=(15, 5))
 
     axs[0].plot(calculate_zscore(first_ecg), label='Z-Scored ECG')
-    axs[0].plot(first_ppg, label='PPG')
+    axs[0].plot(calculate_zscore(first_ppg), label='Z-Scored PPG')
     axs[0].set_title('First Signals')
     axs[0].legend()
 
